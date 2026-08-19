@@ -1,0 +1,20 @@
+# Raw and processed data — too large for Git, and regeneratable via the pipeline scripts
+data/raw/
+data/processed/
+
+# Trained model files — large binaries, regenerate via model_training.py instead
+models/*.joblib
+
+# MLflow tracking database and logged artifacts
+mlflow.db
+mlruns/
+mlartifacts/
+
+# Python environment and cache
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
