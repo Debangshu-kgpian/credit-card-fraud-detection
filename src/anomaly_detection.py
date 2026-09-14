@@ -7,13 +7,19 @@ transaction (including fraud) by how anomalous it is.
 """
 
 import gc
+import mlflow
+import mlflow.sklearn
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import roc_auc_score, average_precision_score
 
+from src import config
 from src.data_utils import load_features, split_data
 
+mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
+mlflow.set_experiment(config.MLFLOW_EXPERIMENT_NAME)
 
-def train_isolation_forest(X_train, y_train):
+
+def train_isolation_forest(X_train, y_train, params):
     """Train Isolation Forest using ONLY non-fraud transactions from the
     training set. This is what makes it 'unsupervised' in spirit even though
     labels are technically available — we deliberately withhold them from
@@ -21,12 +27,7 @@ def train_isolation_forest(X_train, y_train):
     X_train_normal = X_train[y_train == 0]
     print(f"Training Isolation Forest on {X_train_normal.shape[0]} normal transactions only")
 
-    model = IsolationForest(
-        n_estimators=200,
-        contamination=0.035,   # roughly matches the known fraud rate
-        random_state=42,
-        n_jobs=-1
-    )
+    model = IsolationForest(**params)
     model.fit(X_train_normal)
     return model
 
@@ -53,9 +54,26 @@ def run_anomaly_detection():
     del X, y
     gc.collect()
 
-    model = train_isolation_forest(X_train, y_train)
-    anomaly_scores = score_anomalies(model, X_test)
-    evaluate_anomaly_scores(y_test, anomaly_scores)
+    params = {
+        "n_estimators": 200,
+        "contamination": 0.035,
+        "random_state": 42,
+        "n_jobs": -1,
+    }
+
+    with mlflow.start_run(run_name="isolation_forest_challenger"):
+        mlflow.set_tag("model_role", "challenger")
+        mlflow.log_params(params)
+
+        model = train_isolation_forest(X_train, y_train, params)
+        anomaly_scores = score_anomalies(model, X_test)
+        auc, ap = evaluate_anomaly_scores(y_test, anomaly_scores)
+
+        mlflow.log_metric("roc_auc", auc)
+        mlflow.log_metric("average_precision", ap)
+        mlflow.sklearn.log_model(model, "model")
+
+        print(f"Logged run to MLflow experiment: {config.MLFLOW_EXPERIMENT_NAME}")
 
     return model, X_test, y_test, anomaly_scores
 

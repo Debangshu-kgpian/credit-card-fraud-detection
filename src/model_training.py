@@ -8,6 +8,8 @@ so both models are compared on identical, held-out data.
 import os
 import gc
 import joblib
+import mlflow
+import mlflow.xgboost
 import optuna
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
@@ -15,6 +17,9 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 
 from src import config
 from src.data_utils import load_features, split_data
+
+mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
+mlflow.set_experiment(config.MLFLOW_EXPERIMENT_NAME)
 
 
 def make_validation_split(X_train, y_train):
@@ -52,7 +57,7 @@ def objective(trial, X_tr, y_tr, X_val, y_val, spw):
     params = {
         "objective": "binary:logistic",
         "eval_metric": "aucpr",
-        "tree_method": "hist",          # faster and more memory-efficient
+        "tree_method": "hist",
         "scale_pos_weight": spw,
         "random_state": config.RANDOM_SEED,
         "n_estimators": trial.suggest_int("n_estimators", 100, 300),
@@ -124,17 +129,35 @@ def run_model_training(n_trials=20):
     spw = compute_scale_pos_weight(y_train)
     X_tr, X_val, y_tr, y_val = make_validation_split(X_train, y_train)
 
-    best_params = run_optuna_tuning(X_tr, y_tr, X_val, y_val, spw, n_trials=n_trials)
-    del X_tr, X_val, y_tr, y_val
-    gc.collect()
+    with mlflow.start_run(run_name="xgboost_champion"):
+        mlflow.set_tag("model_role", "champion")
 
-    model = train_final_model(X_train, y_train, best_params, spw)
-    auc, ap, test_scores = evaluate_model(model, X_test, y_test)
+        best_params = run_optuna_tuning(X_tr, y_tr, X_val, y_val, spw, n_trials=n_trials)
+        del X_tr, X_val, y_tr, y_val
+        gc.collect()
 
-    os.makedirs(config.MODELS_DIR, exist_ok=True)
-    model_path = os.path.join(config.MODELS_DIR, "xgboost_fraud_model.joblib")
-    joblib.dump(model, model_path)
-    print(f"Saved trained model to {model_path}")
+        mlflow.log_params(best_params)
+        mlflow.log_param("scale_pos_weight", spw)
+        mlflow.log_param("n_trials", n_trials)
+
+        model = train_final_model(X_train, y_train, best_params, spw)
+        auc, ap, test_scores = evaluate_model(model, X_test, y_test)
+
+        mlflow.log_metric("roc_auc", auc)
+        mlflow.log_metric("average_precision", ap)
+
+        mlflow.xgboost.log_model(
+            model,
+            "model",
+            registered_model_name="fraud_xgboost_champion"
+        )
+
+        os.makedirs(config.MODELS_DIR, exist_ok=True)
+        model_path = os.path.join(config.MODELS_DIR, "xgboost_fraud_model.joblib")
+        joblib.dump(model, model_path)
+        print(f"Saved trained model to {model_path}")
+
+        print(f"Logged and registered run to MLflow experiment: {config.MLFLOW_EXPERIMENT_NAME}")
 
     return model, X_test, y_test, test_scores
 
