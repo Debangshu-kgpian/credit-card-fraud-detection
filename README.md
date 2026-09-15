@@ -34,7 +34,40 @@ Experiments are tracked in MLflow (local SQLite backend), logging both models un
 
 ## Tech stack
 
-Python, pandas, scikit-learn, XGBoost, Optuna, MLflow, matplotlib, joblib
+Python, pandas, scikit-learn, XGBoost, Optuna, MLflow, matplotlib, joblib, FastAPI, Uvicorn, Docker, pytest, GitHub Actions, Render
+
+## API & Deployment
+
+The trained XGBoost model is served as a live REST API, built with **FastAPI**, containerized with **Docker**, and deployed on **Render**.
+
+**Live API**: `https://credit-card-fraud-detection-sujt.onrender.com`
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Basic liveness check |
+| `/predict` | POST | Accepts a transaction's engineered features, returns a fraud probability and flag using the cost-optimal 0.07 threshold |
+
+Example request:
+```bash
+curl -X POST https://credit-card-fraud-detection-sujt.onrender.com/predict \
+  -H "Content-Type: application/json" \
+  -d '{"features": {"TransactionAmt": 107.95, "...": "..."}}'
+```
+
+Example response:
+```json
+{"fraud_probability": 0.0006, "is_fraud": false, "threshold_used": 0.07}
+```
+
+## Testing & CI/CD
+
+- **Unit tests** (`pytest`, in `tests/`) validate core pipeline logic (e.g., the transaction/identity join never drops rows, the cost-based threshold math matches hand-calculated expected values) against small, hand-built fixture data — not the real dataset.
+- **CI**: a GitHub Actions workflow (`.github/workflows/ci-cd.yml`) runs the full test suite on every push to `main`.
+- **CD**: Render is connected directly to this GitHub repo and automatically rebuilds and redeploys the Docker container on every push to `main` that passes CI.
+
+## Monitoring
+
+Every `/predict` request is logged (`src/api.py`, `logs/prediction_log.jsonl`). A separate script (`src/monitoring.py`) periodically compares the logged requests' feature distributions against the training data (z-scores on a set of representative features) and logs a drift score into MLflow as a `monitoring`-tagged run — a lightweight foundation for detecting when live traffic starts to look statistically different from training data.
 
 ## Dataset
 
