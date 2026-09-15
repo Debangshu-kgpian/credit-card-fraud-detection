@@ -12,6 +12,8 @@ import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Dict
+import json
+import datetime
 
 from src import config
 
@@ -21,6 +23,23 @@ app = FastAPI(title="Fraud Detection API")
 
 model_path = os.path.join(config.MODELS_DIR, "xgboost_fraud_model.joblib")
 model = joblib.load(model_path)
+
+LOG_PATH = os.path.join("logs", "prediction_log.jsonl")
+os.makedirs("logs", exist_ok=True)
+
+
+def log_prediction(features: dict, probability: float, is_fraud: bool):
+    """Append each prediction request to a local log file — the raw
+    material for later drift checks (comparing live feature distributions
+    against training data)."""
+    entry = {
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "fraud_probability": probability,
+        "is_fraud": is_fraud,
+        "features": features,
+    }
+    with open(LOG_PATH, "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 class Transaction(BaseModel):
@@ -43,6 +62,8 @@ def predict(transaction: Transaction):
 
     probability = float(model.predict_proba(row)[:, 1][0])
     is_fraud = probability >= FRAUD_THRESHOLD
+
+    log_prediction(transaction.features, probability, is_fraud)
 
     return {
         "fraud_probability": round(probability, 4),
